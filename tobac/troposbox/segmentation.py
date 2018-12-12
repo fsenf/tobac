@@ -34,7 +34,7 @@ import skimage.feature
 import skimage.measure
 import mahotas as mh
 
-import grid_and_interpolation as gi
+from . import filters
 
 ######################################################################
 ######################################################################
@@ -157,7 +157,8 @@ def watershed_clustering(f, thresh,
     # apply filtering ------------------------------------------------
     ndim = np.ndim( f )
     if filter_method == 'curve':
-        f_sm = gi.curve_flow_filter(f, numberOfIterations = numberOfIterations)
+        f_sm = filters.curve_flow_filter(f, numberOfIterations = numberOfIterations)
+
     elif filter_method == 'gauss':
         f_sm = scipy.ndimage.gaussian_filter(f,  siggauss)
     # ================================================================
@@ -290,7 +291,7 @@ def connectivity_clustering(f, thresh,
     # apply filtering ------------------------------------------------
     ndim = np.ndim( f )
     if filter_method == 'curve':
-        f_sm = gi.curve_flow_filter(f, numberOfIterations = numberOfIterations)
+        f_sm = filters.curve_flow_filter(f, numberOfIterations = numberOfIterations)
     elif filter_method == 'gauss':
         f_sm = scipy.ndimage.gaussian_filter(f,  siggauss)
     # ================================================================
