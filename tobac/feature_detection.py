@@ -56,7 +56,10 @@ def feature_detection_multithreshold(field_in,
     # if single threshold is put in as a single value, turn it into a list
     if type(threshold) in [int,float]:
         threshold=[threshold]    
-    
+
+    #----------------------------------------------------------------------
+    # (1) LOOP OVER TIME
+    #----------------------------------------------------------------------
     for i_time,data_i in enumerate(data_time):
         time_i=data_i.coord('time').units.num2date(data_i.coord('time').points[0])
         track_data = data_i.data
@@ -64,7 +67,11 @@ def feature_detection_multithreshold(field_in,
         track_data=gaussian_filter(track_data, sigma=sigma_threshold) #smooth data slightly to create rounded, continuous field
         # create empty lists to store regions and features for individual timestep
         regions=[]
-        list_features_thresholds=[]
+
+        #----------------------------------------------------------------------
+        # (2) LOOP OVER THRESHOLDS
+        #---------------------------------------------------------------------- 
+        list_features_thresholds = []
         for i_threshold,threshold_i in enumerate(threshold):
 
             # if looking for minima, set values above threshold to 0 and scale by data minimum:
@@ -82,6 +89,10 @@ def feature_detection_multithreshold(field_in,
 
             # detect individual regions, label  and count the number of pixels included:
             labels = label(mask, background=0)
+
+
+            # start of the basic object-based analysis
+            # =========================================
             values, count = np.unique(labels[:,:].ravel(), return_counts=True)
             values_counts=dict(zip(values, count))
 
@@ -94,6 +105,8 @@ def feature_detection_multithreshold(field_in,
                 values_counts.pop(0)
                 #create empty list to store individual features for this threshold
                 list_features_threshold_i=[]
+                
+
                 #create empty dict to store regions for individual features for this threshold
                 regions.append(dict())
                 #create emptry list of features to remove from parent threshold value
@@ -214,6 +227,10 @@ def feature_detection_multithreshold(field_in,
 
     
     return features
+
+
+######################################################################
+######################################################################
 
 def filter_min_distance(features,dxy,min_distance):
     from itertools import combinations
