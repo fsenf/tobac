@@ -2,6 +2,11 @@ import logging
 import numpy as np
 import pandas as pd
 
+
+######################################################################
+# (1) Multi-Threshold Method
+######################################################################
+
 def feature_detection_multithreshold(field_in,
                                      dxy,
                                      threshold=None,
@@ -228,6 +233,252 @@ def feature_detection_multithreshold(field_in,
     
     return features
 
+######################################################################
+# (2) Based on Troposbox Segmentation Methods
+######################################################################
+
+
+def feature_detection_segmentation(  field_in,
+                                     dxy,
+                                     threshold = None,
+                                     target = 'maximum',
+                                     position_threshold = 'center',
+                                     feature_number_start = 1,
+                                     min_distance=0,
+                                     **kwargs
+                                     ):
+    
+    ''' Function to perform feature detection based on contiguous regions above/below a threshold
+    using either watersheding and connected compound analysis.
+
+
+    Input:
+    field_in:      iris.cube.Cube
+                   2D field to perform the tracking on (needs to have coordinate 'time' along one of its dimensions)
+    
+    thresholds:    list of floats
+                   threshold values used to select target regions to track
+    dxy:           float
+                   grid spacing of the input data (m)
+    target:        str ('minimum' or 'maximum')
+                   flag to determine if tracking is targetting minima or maxima in the data
+    position_threshold: str('extreme', 'weighted_diff', 'weighted_abs' or 'center')
+                      flag choosing method used for the position of the tracked feature
+    sigma_threshold: float
+                     standard deviation for intial filtering step
+    n_erosion_threshold: int
+                         number of pixel by which to erode the identified features
+    n_min_threshold: int
+                     minimum number of identified features
+
+    min_distance:  float
+                   minimum distance between detected features (m)
+    Output:
+    features:      pandas DataFrame 
+                   detected features
+    '''
+
+    # an other keyword is used in the troposbox segmentation routines
+    n_min_threshold = kwargs.get( 'min_size' , 0 )
+    
+    from tobac.utils import add_coordinates
+    import tobac.troposbox.segmentation as seg
+
+    logging.debug('start feature detection based on thresholds')
+    
+    # create empty list to store features for all timesteps
+    list_features_timesteps=[]
+
+    # loop over timesteps for feature identification:
+    data_time = field_in.slices_over('time')
+    
+    #----------------------------------------------------------------------
+    # (1) LOOP OVER TIME
+    #----------------------------------------------------------------------
+    for i_time, data_i in enumerate(data_time):
+        time_i = data_i.coord('time').units.num2date(data_i.coord('time').points[0])
+        track_data = data_i.data
+        
+        # if looking for minima, set values above threshold to 0 and scale by data minimum:
+        if target is 'maximum':
+            labels = seg.clustering(track_data, threshold, **kwargs)
+            
+        # if looking for minima, set values above threshold to 0 and scale by data minimum:
+        elif target is 'minimum':            
+            labels = seg.clustering(-track_data, -threshold, **kwargs)
+        
+            features_list =  basic_object_analysis(i_time, 
+                                                   track_data,
+                                                   threshold,
+                                                   labels, 
+                                                   n_min_threshold = n_min_threshold, 
+                                                   position_threshold = position_threshold,)
+
+            # finished feature detection for specific threshold value:
+            logging.debug('Finished feature detection for threshold '+ str(threshold))
+
+        #check if list of features is not empty, then merge features from different threshold values 
+        #into one DataFrame and append to list for individual timesteps:
+        if any([x is not None for x in features_list]):
+            features_i_merged=pd.concat( features_list, ignore_index=True)
+            #Loop over DataFrame to remove features that are closer than distance_min to each other:
+            
+            if (min_distance > 0):
+                features_i_merged = filter_min_distance( features_i_merged, dxy,min_distance 
+                                                       )
+            list_features_timesteps.append(features_i_merged)
+
+        else:
+            list_features_timesteps.append(None)
+            
+        logging.debug('Finished feature detection for ' + time_i.strftime('%Y-%m-%d_%H:%M:%S'))
+
+
+    logging.debug('feature detection: merging DataFrames')
+    # Check if features are detected and then concatenate features from different timesteps into one pandas DataFrame
+    # If no features are detected raise error
+    if any([x is not None for x in list_features_timesteps]):
+        features = pd.concat(list_features_timesteps, ignore_index=True)   
+    else:
+        raise ValueError('No features detected')
+    logging.debug('feature detection completed')
+    features['feature'] = features.index+feature_number_start
+#    features_filtered = features.drop(features[features['num'] < min_num].index)
+#    features_filtered.drop(columns=['idx','num','threshold_value'],inplace=True)
+#    features_unfiltered=add_coordinates(features,field_in)
+    features = add_coordinates(features,field_in)
+
+    
+    return features
+
+
+
+
+######################################################################
+# (3) Utility Functions
+######################################################################
+
+def basic_object_analysis(i_time, 
+                          track_data,
+                          threshold,
+                          labels, 
+                          features_list = [],
+                          n_min_threshold = 0,
+                          position_threshold = 'center',):
+
+    '''
+    A function to get basic object-based analysis for defining features.
+
+
+    Parameters
+    ----------
+    i_time : int
+        time index in the temporal data stack
+    
+    track_data : numpy array, 2dim
+        original field used for segmentation
+
+    threshold : float
+        threshold using to mask the data field
+
+    labels : numpy array, 2dim
+        segmented field, indices identify connected clusters
+
+    features_list : list, optional, default = []
+        prior set of features
+
+    n_min_threshold : int, optional, default = 0
+        minimum allowed size of a cluster (in number of grid boxes / pixels)
+
+    position_threshold : str, optional, default = 'center'
+        method how centroid position is calculated
+
+
+    Returns
+    --------
+    features_list : list of pandas DataFrames
+        feature data
+    '''
+    
+    # start of the basic object-based analysis
+    # =========================================
+    values, count = np.unique(labels[:,:].ravel(), return_counts = True)
+    values_counts = dict(zip(values, count))
+
+    # Filter out regions that have less pixels than n_min_threshold
+    values_counts = {k:v for k, v in values_counts.items() if v > n_min_threshold}
+
+    #check if not entire domain filled as one feature
+    if 0 in values_counts:
+        #Remove background counts:
+        values_counts.pop(0)
+        
+        #create empty list to store individual features for this threshold
+        features_list_i=[]
+                        
+        #loop over individual regions:            
+        for cur_idx, count in values_counts.items():
+            region = ( labels[:,:] == cur_idx )
+            [a, b] = np.nonzero(region)                    
+
+            
+            # Determine feature position for region by one of the following methods:
+            if position_threshold == 'center':
+                # get position as geometrical centre of identified region:
+                hdim1_index = np.mean(a)
+                hdim2_index = np.mean(b)
+
+            elif position_threshold == 'extreme':
+                #get positin as max/min position inside the identified region:
+                if target is 'maximum':
+                    index = np.argmax( track_data[region] )
+                    hdim1_index = a[index]
+                    hdim2_index = b[index]
+
+                if target is 'minimum':
+                    index = np.argmin( track_data[region] )
+                    hdim1_index = a[index]
+                    hdim2_index = b[index]
+
+            elif position_threshold == 'weighted_diff':
+                
+                # get position as centre of identified region, weighted by difference from the threshold:
+                weights = abs(track_data[region] - threshold)
+                if sum(weights) == 0:
+                    weights = None
+                hdim1_index = np.average(a, weights = weights)
+                hdim2_index = np.average(b, weights = weights)
+
+            elif position_threshold=='weighted_abs':
+                
+                # get position as centre of identified region, weighted by absolute values if the field:
+                weights = abs(track_data[region])
+                if sum(weights) == 0:
+                    weights = None
+                hdim1_index = np.average(a,weights = weights)
+                hdim2_index = np.average(b,weights = weights)
+            else:
+                raise ValueError('position_threshold must be center,extreme,weighted_diff or weighted_abs')
+            
+            #create individual DataFrame row in tracky format for identified feature
+            features_list_i.append( pd.DataFrame(data = {'frame': int(i_time),
+                                                      'idx': cur_idx,
+                                                      'hdim_1': hdim1_index,
+                                                      'hdim_2': hdim2_index,
+                                                      'num': count,
+                                                      'threshold_value': threshold},
+                                               index = [i_time]))     
+
+            
+        #check if list of features is not empty, then merge into DataFrame and append to list for different thresholds
+        if any([x is not None for x in features_list_i]):
+            features_list.append( pd.concat( features_list_i, ignore_index=True) )
+        else: 
+            features_list.append(None)
+    else:
+        features_list.append(None)
+
+    return features_list
 
 ######################################################################
 ######################################################################

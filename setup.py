@@ -7,6 +7,6 @@ setup(name='tobac',
       author='Max Heikenfeld',
       author_email='max.heikenfeld@physics.ox.ac.uk',
       license='GNU',
-      packages=['tobac'],
+      packages=['tobac', 'tobac.troposbox'],
       install_requires=[],#['iris','numpy','netCDF4'],
       zip_safe=False)
