@@ -1420,14 +1420,14 @@ if __name__ == '__main__':
     test = np.arange(25).reshape(( 5, 5)).astype(np.int)
 
     c = cutout_field4box(test, (2,2), 15)
-    print c
-    print c.shape
+    print( c )
+    print( c.shape )
 
 
     test = np.arange(25*2).reshape((5, 5, 2)).astype(np.int)
 
     c = cutout_field4box(test, (2,2), 7, vaxis = 2)
-    print c[:,:,0]
-    print
-    print c[:,:,1]
-    print c.shape
+    print( c[:,:,0] )
+    print()
+    print( c[:,:,1] )
+    print( c.shape )
