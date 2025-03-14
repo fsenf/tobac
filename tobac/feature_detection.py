@@ -1,18 +1,18 @@
 """Provide feature detection.
 
 This module can work with any two-dimensional field.
-To identify the features, contiguous regions above or 
+To identify the features, contiguous regions above or
 below a threshold are determined and labelled individually.
-To describe the specific location of the feature at a 
-specific point in time, different spatial properties 
+To describe the specific location of the feature at a
+specific point in time, different spatial properties
 are used to describe the identified region. [2]_
 
 References
 ----------
 .. Heikenfeld, M., Marinescu, P. J., Christensen, M.,
    Watson-Parris, D., Senf, F., van den Heever, S. C.
-   & Stier, P. (2019). tobac 1.2: towards a flexible 
-   framework for tracking and analysis of clouds in 
+   & Stier, P. (2019). tobac 1.2: towards a flexible
+   framework for tracking and analysis of clouds in
    diverse datasets. Geoscientific Model Development,
    12(11), 4551-4570.
 """
@@ -399,6 +399,7 @@ def feature_detection_threshold(
     idx_start: int = 0,
     PBC_flag: Literal["none", "hdim_1", "hdim_2", "both"] = "none",
     vertical_axis: int = 0,
+    **kwargs: dict[str, Any],
 ) -> tuple[pd.DataFrame, dict]:
     """Find features based on individual threshold value.
 
@@ -417,7 +418,7 @@ def feature_detection_threshold(
         included in the target region. Default is None.
 
     target : {'maximum', 'minimum'}, optional
-        Flag to determine if tracking is targetting minima or maxima
+        Flag to determine if tracking is targeting minima or maxima
         in the data. Default is 'maximum'.
 
     position_threshold : {'center', 'extreme', 'weighted_diff',
@@ -426,7 +427,7 @@ def feature_detection_threshold(
         feature. Default is 'center'.
 
     sigma_threshold: float, optional
-        Standard deviation for intial filtering step. Default is 0.5.
+        Standard deviation for initial filtering step. Default is 0.5.
 
     n_erosion_threshold: int, optional
         Number of pixels by which to erode the identified features.
@@ -452,6 +453,9 @@ def feature_detection_threshold(
     vertical_axis: int
         The vertical axis number of the data.
 
+    kwargs : dict
+        Additional keyword arguments.
+
 
     Returns
     -------
@@ -462,6 +466,8 @@ def feature_detection_threshold(
         Dictionary containing the regions above/below threshold used
         for each feature (feature ids as keys).
     """
+
+    feature_selection_method = kwargs.pop('feature_selection_method', 'labeling')
 
     from skimage.measure import label
     from skimage.morphology import binary_erosion
@@ -501,7 +507,10 @@ def feature_detection_threshold(
             selem = np.ones((n_erosion_threshold, n_erosion_threshold))
         mask = binary_erosion(mask, selem)
         # detect individual regions, label  and count the number of pixels included:
-    labels, num_labels = label(mask, background=0, return_num=True)
+
+    if feature_selection_method == 'labeling':
+        labels, num_labels = label(mask, background=0, return_num=True)
+    
     if not is_3D:
         # let's transpose labels to a 1,y,x array to make calculations etc easier.
         labels = labels[np.newaxis, :, :]
@@ -913,6 +922,7 @@ def feature_detection_multithreshold_timestep(
     strict_thresholding: bool = False,
     statistic: Union[dict[str, Union[Callable, tuple[Callable, dict]]], None] = None,
     statistics_unsmoothed: bool = False,
+    return_regions: bool = False
 ) -> pd.DataFrame:
     """Find features in each timestep.
 
@@ -1148,7 +1158,10 @@ def feature_detection_multithreshold_timestep(
             id_column="idx",
         )
 
-    return features_thresholds
+    if return_regions:
+        return features_thresholds, regions_old
+    else:
+        return features_thresholds
 
 
 @decorators.xarray_to_iris()
@@ -1175,6 +1188,7 @@ def feature_detection_multithreshold(
     strict_thresholding: bool = False,
     statistic: Union[dict[str, Union[Callable, tuple[Callable, dict]]], None] = None,
     statistics_unsmoothed: bool = False,
+    return_regions: bool = False,
 ) -> pd.DataFrame:
     """Perform feature detection based on contiguous regions.
 
@@ -1328,6 +1342,9 @@ def feature_detection_multithreshold(
     # create empty list to store features for all timesteps
     list_features_timesteps = []
 
+    if return_regions:
+        regions_list = []
+
     # loop over timesteps for feature identification:
     data_time = field_in.slices_over("time")
 
@@ -1372,7 +1389,7 @@ def feature_detection_multithreshold(
     for i_time, data_i in enumerate(data_time):
         time_i = data_i.coord("time").units.num2date(data_i.coord("time").points[0])
 
-        features_thresholds = feature_detection_multithreshold_timestep(
+        args = feature_detection_multithreshold_timestep(
             data_i,
             i_time,
             threshold=threshold,
@@ -1391,9 +1408,18 @@ def feature_detection_multithreshold(
             strict_thresholding=strict_thresholding,
             statistic=statistic,
             statistics_unsmoothed=statistics_unsmoothed,
+            return_regions=return_regions
         )
 
+        if return_regions:
+            features_thresholds, regions = args
+        else:
+            features_thresholds = args
+
         list_features_timesteps.append(features_thresholds)
+
+        if return_regions:
+            regions_list.append(regions)
 
         logging.debug(
             "Finished feature detection for " + time_i.strftime("%Y-%m-%d_%H:%M:%S")
@@ -1445,12 +1471,17 @@ def feature_detection_multithreshold(
                 )
             features = pd.concat(filtered_features, ignore_index=True)
 
+            # regions need to be filtered as well
     else:
         features = None
         logging.debug("No features detected")
 
     logging.debug("feature detection completed")
-    return features
+
+    if return_regions:
+        return features, regions_list
+    else:
+        return features
 
 
 def filter_min_distance(
